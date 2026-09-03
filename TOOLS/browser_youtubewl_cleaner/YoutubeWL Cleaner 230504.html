@@ -1,0 +1,137 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+
+<html>
+  <head>
+    <meta charset="UTF-8">
+    <title>Watchlist Manager</title>
+    <script src="https://apis.google.com/js/client.js?onload=onLoadCallback"></script>
+    <script src="https://apis.google.com/js/api.js"></script>
+
+  </head>
+  <body>
+    <h1>Watchlist Manager (NO funciona)</h1>
+    <h2 id="videoCount"></h2>
+    <button id="getWatchlistBtn" onclick="getWatchlist()">Get Watchlist</button>
+    <button id="removeBtn" onclick="removeVideos()">Remove Checked</button>
+    <br><br>
+    <ul id="watchlistItems">
+      <li><input type="checkbox"> Video 1</li>
+      <li><input type="checkbox"> Video 2</li>
+      <li><input type="checkbox"> Video 3</li>
+      <li><input type="checkbox"> Video 4</li>
+    </ul>
+    
+
+    <script>
+      // Define the API key and the API endpoints
+      const API_KEY = 'AIzaSyB_94TiKxkGmgpMdP6Hd-ej8vmRKGw8Ylo';
+      const apiUrl = 'https://www.googleapis.com/youtube/v3/';
+      const playlistId = 'PLZMjOeNzMJUjRvM42dyJYGtF9KHCgNpoY'; // Watch Later playlist ID
+      
+      // Function to get the Watch Later list from YouTube
+      function getWatchlist() {
+  // Make an API request to get the list of videos in the Watch Later playlist
+  const requestUrl = apiUrl + 'playlistItems?part=status,contentDetails,id,snippet&maxResults=150&playlistId=' + playlistId + '&key=' + API_KEY;
+  fetch(requestUrl)
+    .then(response => response.json())
+    .then(data => {
+      console.log(data); // Debug line to log the API response to the console
+      // Populate the watchlistItems list with the retrieved videos
+      const watchlistItems = document.getElementById('watchlistItems');
+      watchlistItems.innerHTML = ''; // Clear the list first
+      data.items.forEach(item => {
+        const videoId = item.id;
+        const videoTitle = item.snippet.title;
+        const videoDescription = item.snippet.description;
+        const videoThumbnail = item.snippet.thumbnails.default.url;
+        const videoStatus = item.status.privacyStatus;
+        const videoDuration = item.contentDetails.duration;
+
+        const videoCount = document.getElementById("videoCount")
+        videoCount.textContent = "" + data.items.length + " videos"
+        
+        const listItem = document.createElement('li');
+        listItem.setAttribute('id', videoId);
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        listItem.appendChild(checkbox);
+        
+        const thumbnail = document.createElement('img');
+        thumbnail.src = videoThumbnail;
+        thumbnail.alt = videoTitle;
+        listItem.appendChild(thumbnail);
+        
+        const title = document.createElement('h3');
+        title.textContent = videoTitle;
+        listItem.appendChild(title);
+        
+        // const duration = document.createElement('span');
+        // duration.textContent = videoDuration;
+        // listItem.appendChild(duration);
+        
+        // const description = document.createElement('p');
+        // description.textContent = videoDescription;
+        // listItem.appendChild(description);
+        
+        // const status = document.createElement('span');
+        // status.textContent = videoStatus;
+        // listItem.appendChild(status);
+        
+        watchlistItems.appendChild(listItem);
+      });
+    })
+    .catch(error => console.error(error));
+}
+        
+function removeVideos() {
+  // Get all checked items from the list
+  const checkedItems = document.querySelectorAll('input[type="checkbox"]:checked');
+
+  if (checkedItems.length >= 0) {
+
+  // Authorize the client with the OAuth 2.0 endpoint
+  gapi.auth.authorize(
+    {
+      client_id: '949823328549-3ufqforbfupu45hts0gpn9ui3a3tgef2.apps.googleusercontent.com',
+      scope: 'https://www.googleapis.com/auth/youtube.force-ssl',
+      immediate: false,
+    },
+    (authResult) => {
+      if (authResult && !authResult.error) {
+        // Use the access token to make the API request
+        const accessToken = authResult.access_token;
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `https://www.googleapis.com/youtube/v3/playlistItems/delete?access_token=${accessToken}`);
+
+        // Set the content type and request headers
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.setRequestHeader('Authorization', `Bearer ${accessToken}`);
+
+        // Loop through each checked item and delete it from the watchlist
+        for (let i = 0; i < checkedItems.length; i++) {
+          const videoId = checkedItems[i].parentNode.id;
+          const requestBody = JSON.stringify({
+            id: videoId,
+          });
+
+          // Send the request to the API
+          xhr.send(requestBody);
+
+          // Uncheck and hide the deleted item from the list
+          checkedItems[i].checked = false;
+          checkedItems[i].parentNode.style.display = 'none';
+        }
+      } else {
+        alert('Authorization failed. Please try again.');
+      }
+    }
+  );
+}
+}
+
+
+    </script>
+  </body>
+</html>

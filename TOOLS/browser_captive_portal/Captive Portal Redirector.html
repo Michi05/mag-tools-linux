@@ -1,0 +1,180 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Captive Portal Redirector</title>
+<style>
+  body { font-family: sans-serif; background:#111; color:#eee; display:flex; align-items:center; justify-content:center; min-height:100vh; margin:0; }
+  #box { text-align:left; width:460px; max-width:90vw; }
+  h1 { font-size:1.1rem; margin:0 0 4px; display:flex; justify-content:space-between; align-items:baseline; }
+  #gw-note { font-size:0.78rem; opacity:.6; margin:0 0 6px; }
+  #clock { font-variant-numeric: tabular-nums; font-size:0.95rem; opacity:.7; }
+  ul { list-style:none; margin:0; padding:0; }
+  li { display:flex; align-items:center; gap:8px; padding:6px 4px; border-bottom:1px solid #222; font-size:0.92rem; cursor:pointer; border-radius:4px; }
+  li:hover { background:#1e1e1e; }
+  li .icon { width:1.1em; text-align:center; flex-shrink:0; }
+  li .url { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  li .elapsed { opacity:.6; font-variant-numeric: tabular-nums; font-size:0.85rem; }
+  li.pending { opacity:.45; }
+  li.checking { opacity:1; background:#1a1a1a; }
+  li.ok .icon { color:#4caf50; }
+  li.fail .icon { color:#e05555; }
+  li.skipped { opacity:.35; }
+  li.skipped .icon { color:#888; }
+  li.gateway .url { color:#8ab4ff; }
+  .spin { display:inline-block; animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #final-msg { margin-top:10px; font-size:0.95rem; min-height:1.2em; }
+  #rerun { margin-top:10px; padding:6px 14px; font-size:0.9rem; background:#2a2a2a; color:#eee; border:1px solid #444; border-radius:5px; cursor:pointer; }
+  #rerun:hover { background:#333; }
+  #rerun:disabled { opacity:.4; cursor:default; }
+  .hint { font-size:0.78rem; opacity:.5; margin-top:6px; }
+</style>
+</head>
+<body>
+<div id="box">
+  <h1><span>Captive Portal Redirector</span><span id="clock">0.0s</span></h1>
+  <div id="gw-note"></div>
+  <ul id="steps"></ul>
+  <div id="final-msg"></div>
+  <button id="rerun">↻ Rerun checks</button>
+  <div class="hint">Click any URL to open it manually in a new tab.</div>
+</div>
+<script>
+// plain HTTP only — no TLS, so a captive portal can intercept cleanly
+// without throwing a cert-mismatch warning at the user.
+// neverssl/httpforever have real visible bodies, safe as a final landing.
+// generate_204/captive.apple are machine probes (204 / near-empty body) —
+// opening them as a landing tab shows nothing useful, so they're only
+// used to confirm connectivity, never as the final open target.
+
+// Optional gateway candidate, supplied by MAG - Captive Portals.ps1 via ?gw=.
+// Pure client-side JS cannot derive the default gateway (browsers expose no
+// local-network-topology API), so the PS1 computes it and passes it in. This
+// is the "PS1 gateway-IP approach" merged into the dashboard; the gateway is
+// prepended as the first candidate since portals are often hosted there.
+const gwMatch = new URLSearchParams(location.search).get('gw');
+const gateway = gwMatch && /^\d+\.\d+\.\d+\.\d+$/.test(gwMatch) ? gwMatch : null;
+
+const landingCandidates = ['http://neverssl.com/', 'http://httpforever.com/'];
+const pingCandidates = ['http://captive.apple.com/', 'http://google.com/generate_204'];
+
+const plan = [];
+if (gateway) {
+  plan.push({ url: 'http://' + gateway + '/', kind: 'landing', gateway: true });
+}
+plan.push(...landingCandidates.map(url => ({ url, kind: 'landing' })));
+plan.push(...pingCandidates.map(url => ({ url, kind: 'ping' })));
+
+const stepsEl = document.getElementById('steps');
+const clockEl = document.getElementById('clock');
+const gwNoteEl = document.getElementById('gw-note');
+const finalMsgEl = document.getElementById('final-msg');
+const rerunBtn = document.getElementById('rerun');
+let startTime = performance.now();
+let running = false;
+
+if (gateway) {
+  gwNoteEl.textContent = 'Gateway ' + gateway + ' supplied by MAG - Captive Portals.ps1 — tried first.';
+}
+
+// render full step list up front so past/present/future is always visible,
+// and stays on screen (this page never navigates away) as a dashboard.
+plan.forEach((step, i) => {
+  const li = document.createElement('li');
+  li.id = 'step-' + i;
+  li.className = 'pending' + (step.gateway ? ' gateway' : '');
+  li.innerHTML =
+    '<span class="icon">&#9679;</span>' +
+    '<span class="url">' + step.url + '</span>' +
+    '<span class="elapsed"></span>';
+  li.addEventListener('click', () => window.open(step.url, '_blank'));
+  stepsEl.appendChild(li);
+});
+
+let clockInterval = null;
+
+function tickClock() {
+  clockEl.textContent = ((performance.now() - startTime) / 1000).toFixed(1) + 's';
+}
+
+function startClock() {
+  stopClock();
+  startTime = performance.now();
+  tickClock();
+  clockInterval = setInterval(tickClock, 100);
+}
+
+// freezes the counter so elapsed time reads as "how long this took",
+// not "still doing something" — user re-triggers manually if needed.
+function stopClock() {
+  if (clockInterval) { clearInterval(clockInterval); clockInterval = null; }
+  tickClock();
+}
+
+function setStep(i, state, elapsedMs) {
+  const li = document.getElementById('step-' + i);
+  li.className = state + (plan[i].gateway ? ' gateway' : '');
+  const icon = li.querySelector('.icon');
+  const elapsedEl = li.querySelector('.elapsed');
+  if (state === 'checking') icon.innerHTML = '<span class="spin">&#8635;</span>';
+  else if (state === 'ok') icon.textContent = '✔';
+  else if (state === 'fail') icon.textContent = '✖';
+  else if (state === 'skipped') icon.textContent = '–';
+  else icon.textContent = '●';
+  if (elapsedMs != null) elapsedEl.textContent = (elapsedMs / 1000).toFixed(1) + 's';
+  else elapsedEl.textContent = '';
+}
+
+function probe(url, timeoutMs = 4000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  return fetch(url, { mode: 'no-cors', cache: 'no-store', signal: ctrl.signal })
+    .then(() => true)
+    .catch(() => false)
+    .finally(() => clearTimeout(t));
+}
+
+async function run() {
+  if (running) return;
+  running = true;
+  rerunBtn.disabled = true;
+  finalMsgEl.textContent = '';
+  plan.forEach((_, i) => setStep(i, 'pending'));
+  startClock();
+
+  let opened = false;
+  for (let i = 0; i < plan.length; i++) {
+    const { url, kind } = plan[i];
+
+    if (opened) { setStep(i, 'skipped'); continue; }
+
+    setStep(i, 'checking');
+    const t0 = performance.now();
+    const ok = await probe(url);
+    const dt = performance.now() - t0;
+    setStep(i, ok ? 'ok' : 'fail', dt);
+
+    if (ok) {
+      const target = kind === 'landing' ? url : 'http://captive.apple.com/';
+      finalMsgEl.textContent = 'Reachable — opened ' + target + ' in a new tab.';
+      window.open(target, '_blank');
+      opened = true;
+      stopClock(); // assume success — user re-triggers manually if it didn't actually work
+    }
+  }
+
+  if (!opened) {
+    finalMsgEl.textContent = 'No connectivity detected — check Wi-Fi / cable and rerun.';
+    stopClock();
+  }
+  running = false;
+  rerunBtn.disabled = false;
+}
+
+rerunBtn.addEventListener('click', run);
+run();
+</script>
+</body>
+</html>

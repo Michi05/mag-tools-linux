@@ -1,0 +1,5 @@
+requests
+websocket-client
+beautifulsoup4
+markdownify
+lxml

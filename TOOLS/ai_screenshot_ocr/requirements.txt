@@ -1,0 +1,5 @@
+openvino-genai
+openvino
+huggingface_hub
+pillow
+numpy

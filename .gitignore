@@ -1,0 +1,50 @@
+# Virtual environments (per-tool .venv/ folders, plus a root one if used)
+.venv/
+venv/
+*/.venv/
+__pycache__/
+*.py[cod]
+
+# Downloaded models / binaries (large, re-fetchable — see each tool's README)
+TOOLS/ai_screenshot_ocr/InternVL2-1B-int8-ov/
+TOOLS/video_ai_upscale/realesrgan-ncnn-vulkan
+TOOLS/video_ai_upscale/models/
+TOOLS/video_ai_upscale/_upscale_tmp/
+
+# Local-only secrets — mirror the old repo's convention: keep credentials
+# and machine-specific material out of the tracked tree entirely.
+_local_only/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs, build artifacts
+*.log
+node_modules/
+build/
+dist/
+
+# Generated media and source recordings
+vid_processed/
+*.3gp
+*.aac
+*.avi
+*.flac
+*.m4a
+*.mkv
+*.mov
+*.mp3
+*.mp4
+*.ogg
+*.opus
+*.wav
+*.webm
+
+# Self health test scratch output (results.md is tracked; raw run logs are not)
+self_health_test/*.log
+
+# Claude Code local overrides (machine-specific permission tweaks)
+.claude/settings.local.json
