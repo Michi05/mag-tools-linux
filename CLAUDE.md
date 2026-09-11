@@ -70,8 +70,15 @@ invent the other folders speculatively.
 | WireGuard config/notes | `TOOLS/vpn_wireguard/` | Self-hosted VPN on UpCloud — setup/reconnect |
 
 Also available via slash command (not a `TOOLS/` folder): `/mag_vid_compress`
-— FFmpeg screen-recording compression, hardware AV1 (QSV or NVENC, both
-confirmed available on this machine).
+— FFmpeg screen-recording compression. Hardware AV1 (QSV/NVENC) is compiled
+into ffmpeg but does **not** actually work on this machine's silicon (neither
+GPU has AV1 *encode* hardware) — that part is permanent. QSV H.264/HEVC
+encode used to fail too, but that was a fixable driver issue (open-source
+`intel-media-va-driver` lacked encode kernels); installing
+`intel-media-va-driver-non-free` fixed it (2026-09-03) — `hevc_qsv` (with
+`-hwaccel qsv`) now works and is roughly on par with `hevc_nvenc`. See
+`TOOLS.md` for full detail and benchmarks. Default AV1 output still uses CPU
+`libsvtav1` since neither GPU can do AV1.
 
 ## Important notes
 

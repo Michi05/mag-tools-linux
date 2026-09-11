@@ -10,41 +10,155 @@ targets.
 
 ## FFmpeg — Video Compression (`/mag_vid_compress`)
 
-**What it does:** Compresses screen recordings using hardware AV1 encoding
-for maximum storage reduction (typically 15–30× smaller than H.264).
+**What it does:** Compresses screen recordings (and other video) using
+hardware HEVC encoding by default — fast, near-zero CPU/GPU-of-choice load.
+CPU AV1 (`libsvtav1`) is available as an opt-in "smallest possible file"
+mode when the user prioritizes size over turnaround time.
 **When to use:** Archiving screen recordings, walkthroughs, or meeting
 captures where file size matters and pixel-perfect fidelity is not required.
 
 **Invoke via skill:** `/mag_vid_compress` — accepts a file name, full path,
 or folder.
 
+**⚠️ Pitfall — hardware AV1 encode does NOT work on this machine despite
+`ffmpeg -encoders` listing both encoders as compiled in:**
+- `av1_qsv` (Intel Iris Xe, TigerLake): fails at encoder-open time with
+  `This version of runtime doesn't support AV1 encoding`. TigerLake's QSV
+  driver only supports AV1 *decode*; AV1 *encode* via QSV only ships from
+  Meteor Lake/Arc onward. **This one really is a silicon limit** — no driver
+  fix will unlock it on this iGPU.
+- `av1_nvenc` (NVIDIA RTX 3060, Ampere/GA106): fails with
+  `No capable devices found`. The GPU and NVENC path itself work fine
+  (confirmed via `h264_nvenc`), but Ampere has no AV1 NVENC encode block at
+  all — that only shipped with Ada Lovelace (RTX 40-series). **Also a
+  silicon limit**, not fixable via driver/package changes.
+- Also note if using `av1_nvenc`: its preset names are numeric/`p1`-`p7`
+  (`p7` = slowest/best), *not* the x264/QSV-style `veryslow` — passing
+  `veryslow` fails with `Unable to parse option value`.
+- **Bottom line for AV1 specifically:** on this machine, always go straight
+  to the CPU `libsvtav1` fallback below for AV1 output. Don't waste time
+  retrying `av1_qsv`/`av1_nvenc` — they are compiled in but non-functional on
+  this exact hardware, and no config change fixes that.
+
+**✅ Fixed 2026-09-03 — `h264_qsv`/`hevc_qsv` now work.** They used to fail
+out of the box with `some encoding parameters are not supported by the QSV
+runtime` (even with zero extra options, even pinning the correct Intel
+render node explicitly) — that looked like a hardware/silicon problem but
+wasn't: TigerLake's Iris Xe has had H.264/HEVC hardware *encode* since well
+before this chip shipped.
+- **Root cause:** this machine had `intel-media-va-driver` installed — the
+  "Free Kernel Build" of Intel's VAAPI driver, built fully open-source with
+  the proprietary hardware-encode kernels stripped out (decode/video-processing
+  only). The package with actual H.264/HEVC hardware encode is
+  `intel-media-va-driver-non-free`, available in the already-enabled
+  `multiverse` repo.
+- **Fix applied:** `sudo apt install intel-media-va-driver-non-free`
+  (installed and confirmed 2026-09-03; apt handled the conflict/replace
+  against the free package).
+- **Critical usage gotcha found while benchmarking:** `hevc_qsv` alone only
+  offloads the *encode* — without `-hwaccel qsv` on the input side, ffmpeg
+  still software-decodes the source on CPU, which erased the entire speed
+  advantage in testing (a 4K clip ran at only ~0.45x realtime, CPU-bound,
+  indistinguishable from a slow software path). Adding `-hwaccel qsv` before
+  `-i` dropped CPU usage to near-zero and pushed the same clip to ~1x
+  realtime. **Always pass `-hwaccel qsv` when using `hevc_qsv`/`h264_qsv`.**
+  Also: `-preset veryslow` on this QSV runtime is not a true low-power
+  hardware path (`-preset medium` gave the good numbers below;
+  `-low_power 1` is reported unsupported on this hardware).
+- **Sources:** [Intel media stack on Ubuntu](https://github.com/Intel-Media-SDK/MediaSDK/wiki/Intel-media-stack-on-Ubuntu),
+  [Different AVC low power encoding quality on free and non-free media drivers](https://github.com/Intel-Media-SDK/MediaSDK/issues/1735),
+  [Debian HardwareVideoAcceleration wiki](https://wiki.debian.org/HardwareVideoAcceleration).
+- **Bottom line for HEVC/H.264:** `hevc_qsv` (with `-hwaccel qsv`) is now a
+  fully working, fast hardware path on the Iris Xe — frees the RTX 3060 and
+  leaves the CPU essentially idle. AV1 via QSV is still a hard no per the
+  silicon limit above — that part didn't change.
+
+**Benchmark data (2026-09-03, 4K/30fps/142s real-world clip, not a screen
+recording; source 615MB):**
+
+| Path | Wall time | Realtime speed | CPU used | Output size | vs. source |
+|---|---|---|---|---|---|
+| `hevc_qsv -hwaccel qsv -global_quality 20 -preset medium` (Iris Xe) | 2m24s | 0.99x | ~8s (near-zero) | 292MB | 52.5% |
+| `hevc_nvenc -cq 20 -preset p7` (RTX 3060) | 2m32s | 0.93x | GPU-bound | 343MB | 55.7% |
+| `libsvtav1 -crf 30 -preset 10 -svtav1-params lp=8` (CPU, 8 threads) | 5m50s | 0.41x | full 8 cores | 76MB | 12.2% |
+
+QSV HEVC now matches or slightly beats NVENC on both speed and size while
+leaving the discrete GPU and CPU free. Note the CRF/CQ targets across rows
+weren't fully quality-matched (AV1's `crf 30` is a more aggressive target
+than the HEVC paths' `cq/global_quality 20`), so the AV1 size advantage is
+partly a quality-target difference, not purely codec efficiency — treat the
+AV1 row as directional, not a controlled A/B against the two HEVC rows
+(which *are* comparable to each other, same quality target).
+
 **Agent defaults (always applied unless user specifies otherwise):**
 - Output folder: `~/Videos/mag_compressed/`
-- Output filename: `<original_name>_AV1.mp4`
-- Encoder: `av1_qsv` (Intel QSV, via the Iris Xe iGPU) — confirmed available
-  on this machine; `av1_nvenc` (NVIDIA RTX 3060) is also available as an
-  alternate path
-- Frame rate: `fps=15` (screen recording sweet spot)
-- Quality: `-global_quality 20` (sharp text; range 1–51, lower = higher quality)
-- Preset: `veryslow` (best quality-per-bit on hardware encoders)
+- Output filename: `<original_name>_HEVC.mp4` (`_AV1.mp4` if the CPU AV1
+  opt-in path below is used instead)
+- Encoder: **`hevc_qsv`** (Intel Iris Xe, hardware) — GPU default since
+  2026-09-03 (was CPU `libsvtav1` before the QSV driver fix above). Frees the
+  RTX 3060, near-zero CPU load, ~1x realtime. **Requires `-hwaccel qsv` on
+  the input** (see gotcha above) — never omit it.
+- Frame rate: `fps=15` (screen recording sweet spot; for non-screen-recording
+  source like phone video, ask the user — see note below)
+- Quality: `-global_quality 20` (range ~1–51, lower = higher quality)
+- Preset: `medium` (QSV preset; `veryslow` is not a real low-power path on
+  this driver — see gotcha above)
 - Audio: `-c:a copy` (passthrough — zero loss, no echo artifacts)
 
 **Core command:**
 ```sh
-ffmpeg -y -loglevel error -stats -i "<input>" -vf "fps=15" -c:v av1_qsv -global_quality 20 -preset veryslow -c:a copy "<output>"
+ffmpeg -y -loglevel error -stats -hwaccel qsv -i "<input>" -vf "fps=15" -c:v hevc_qsv -global_quality 20 -preset medium -c:a copy "<output>"
 ```
 
+**Opt-in alternatives (use when the user asks, or when picking between them
+matters for their situation):**
+- **NVIDIA HEVC** (`hevc_nvenc`) — comparable speed to the default, uses the
+  RTX 3060 instead of the iGPU. Pick this if the user wants the Iris Xe free
+  for something else, or the iGPU is already busy.
+  ```sh
+  ffmpeg -y -loglevel error -stats -i "<input>" -vf "fps=15" -c:v hevc_nvenc -cq 20 -preset p7 -c:a copy "<output>"
+  ```
+  NVENC preset names are numeric/`p1`-`p7` (`p7` = slowest/best), not the
+  x264/QSV-style `veryslow` — passing `veryslow` fails with `Unable to parse
+  option value`.
+- **Maximum compression** (`libsvtav1`, CPU-only) — pick this when the user
+  says size matters more than turnaround time; smallest file by a wide
+  margin but ~2-3x slower than either GPU path and pins all CPU cores.
+  ```sh
+  ffmpeg -y -loglevel error -stats -i "<input>" -vf "fps=15" -c:v libsvtav1 -crf 28 -preset 10 -svtav1-params lp=8 -c:a copy "<output>"
+  ```
+  `-preset 10` (range `-2` slowest/best to `13` fastest/worst) is the
+  practical middle ground; only go slower (e.g. `6`, ~0.1x realtime — ~45min
+  for a 4-min video) if the user explicitly wants maximum quality and
+  accepts a much longer runtime.
+- AV1 via GPU (`av1_qsv`/`av1_nvenc`) is never a valid option on this
+  machine regardless of what the user asks for — it's a silicon limit on
+  both GPUs (see pitfall above). Redirect any such request to CPU `libsvtav1`.
+
+**Non-screen-recording source (e.g. phone video, not the tool's original
+use case):** the `fps=15` default is a screen-recording assumption and will
+visibly hurt quality on normal 30/60/120fps footage. If the source isn't a
+screen recording, ask the user whether to keep native fps, use the 15fps
+default anyway, or downscale to something in between (e.g. 30fps) before
+proceeding.
+
 **Common variations:**
-- Lower quality / smaller file → increase `-global_quality` (e.g. 35)
+- Higher/lower quality → adjust `-global_quality`/`-cq`/`-crf` per whichever
+  codec is in use (lower = higher quality on all three, but scales differ —
+  QSV/NVENC quality flags run roughly 1–51, `libsvtav1`'s `-crf` runs 0–63)
 - Re-encode audio → `-c:a aac -b:a 64k` instead of copy
-- No fps reduction → drop `-vf "fps=15"`
-- Use the NVIDIA GPU instead → `-c:v av1_nvenc -cq 20`
+- No fps reduction → drop `-vf "fps=15"` and raise the quality target
+  accordingly (e.g. `-global_quality 35` on the GPU paths)
 
 **Requirements:** FFmpeg (already installed system-wide via apt on this
-machine: `ffmpeg version 6.1.1`). Check available encoders with
-`ffmpeg -encoders | grep -E 'av1_(qsv|vaapi|nvenc)'` — both `av1_qsv` and
-`av1_nvenc` were confirmed present. If neither is available, fall back to
-CPU encoding with `libsvtav1` (much slower).
+machine: `ffmpeg version 6.1.1`) plus `intel-media-va-driver-non-free`
+(installed 2026-09-03 — see the QSV pitfall/fix above) for `hevc_qsv` to
+work at all. Do not rely on `ffmpeg -encoders` alone to judge hardware
+availability for any codec on this machine — it lists `av1_qsv`/`av1_nvenc`
+as compiled in even though neither works (silicon limit), and previously
+listed `hevc_qsv`/`h264_qsv` as compiled in while the driver made them fail
+too (now fixed). Verify with a real short test encode before trusting any
+new path.
 
 ---
 
