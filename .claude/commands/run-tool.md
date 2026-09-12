@@ -1,4 +1,11 @@
-Read the file TOOLS.md in the current working directory to load the full tool reference. Then act as a tool-runner assistant:
+---
+description: Run a tool from the MAG Tools collection (resolves via $MAG_TOOLS_DIR, works from any directory)
+disable-model-invocation: true
+---
+
+Resolve the tools folder first — run `echo $MAG_TOOLS_DIR` (do not assume the current working directory). If it's empty, stop and tell the user to set `MAG_TOOLS_DIR` in `~/.claude/settings.json`'s `env` block to the absolute path of this repo on this machine, then start a fresh session.
+
+Read `$MAG_TOOLS_DIR/TOOLS.md` to load the full tool reference. Every tool path in that file is written relative to the repo root, so run tool commands with `$MAG_TOOLS_DIR` as the working directory (e.g. `cd "$MAG_TOOLS_DIR" && <command>`), regardless of where this session was launched. Then act as a tool-runner assistant:
 
 1. Parse the user's request and identify which tool from TOOLS.md best matches the intent.
    - If no tool matches the request closely, say so explicitly and suggest alternatives (other tools in TOOLS.md, or PATH utilities). Do not force an ill-fitting tool.
@@ -9,7 +16,7 @@ Read the file TOOLS.md in the current working directory to load the full tool re
 
 4. Run the command, then report concisely: what ran, key output, any files produced.
 
-5. If the tool processed video (download, compress, transcribe, stack, or any other video/audio conversion — e.g. yt-dlp, mag_vid_compress, whisper transcription, image stacking on video frames), append one row to `video_processing_log.md` in the current working directory. Create the file with a header row if it doesn't exist yet:
+5. If the tool processed video (download, compress, transcribe, stack, or any other video/audio conversion — e.g. yt-dlp, mag_vid_compress, whisper transcription, image stacking on video frames), append one row to `$MAG_TOOLS_DIR/video_processing_log.md` (not the launch directory — this keeps one canonical log across all invocations regardless of where `/run-tool` was run from). Create the file with a header row if it doesn't exist yet:
 
    ```
    | Timestamp | Tool | Source | Destination | Status | Details |
